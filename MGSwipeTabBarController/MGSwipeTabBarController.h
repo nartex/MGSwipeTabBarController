@@ -44,6 +44,8 @@
 
 extern CGFloat const kBPDefaultSelectedIndexAnimationDuration;
 
+@property (nonatomic, assign) BOOL scrollingEnabled;
+
 //The current view controller stack.
 @property (nonatomic, strong) NSArray *viewControllers;
 
