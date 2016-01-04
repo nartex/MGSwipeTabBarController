@@ -14,6 +14,8 @@
 
 @property (nonatomic) NSArray *containerHorizontalConstraints;
 @property (nonatomic) NSArray *containerVerticalConstraints;
+@property (assign, nonatomic) BOOL constraintsAdded;
+@property (assign, nonatomic) UIInterfaceOrientation constraintsOrientation;
 
 @end
 
@@ -25,23 +27,23 @@
 CGFloat const kBPDefaultSelectedIndexAnimationDuration = .35f;
 
 #pragma mark - Setters/Getters
-- (void) setSwipeInterval:(NSTimeInterval)swipeInterval {
+- (void)setSwipeInterval:(NSTimeInterval)swipeInterval {
     if (swipeInterval < 0)
         _swipeInterval = 0;
     _swipeInterval = swipeInterval;
 }
 
-- (void) setView:(UIView*)view constraints:(NSArray*)constraints to:(NSArray * __strong *)reference{
+- (void)setView:(UIView*)view constraints:(NSArray*)constraints to:(NSArray * __strong *)reference{
     if (*reference) [view removeConstraints:*reference];
     *reference = constraints;
     [view addConstraints:*reference];
 }
 
-- (void) setContainerHorizontalConstraints:(NSArray *)containerHorizontalConstraints {
+- (void)setContainerHorizontalConstraints:(NSArray *)containerHorizontalConstraints {
     [self setView:self.containerView constraints:containerHorizontalConstraints to:&_containerHorizontalConstraints];
 }
 
-- (void) setContainerVerticalConstraints:(NSArray *)containerVerticalConstraints {
+- (void)setContainerVerticalConstraints:(NSArray *)containerVerticalConstraints {
     [self setView:self.view constraints:containerVerticalConstraints to:&_containerVerticalConstraints];
 }
 
@@ -72,10 +74,10 @@ CGFloat const kBPDefaultSelectedIndexAnimationDuration = .35f;
         view.translatesAutoresizingMaskIntoConstraints = NO;
         [self.containerView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[view]|" options:0 metrics:nil views:NSDictionaryOfVariableBindings(view)]];
         
-        NSString *key = [NSString stringWithFormat:@"view%d",idx];
+        NSString *key = [NSString stringWithFormat:@"view%lu",(unsigned long)idx];
         [viewBindings setObject:view forKey:key];
         if (idx == 0) [autoLayoutString appendFormat:@"[%@]",key];
-        else [autoLayoutString appendFormat:@"[%@(==%@)]",key, [NSString stringWithFormat:@"view%d",idx-1]];
+        else [autoLayoutString appendFormat:@"[%@(==%@)]",key, [NSString stringWithFormat:@"view%lu",idx-1]];
     }];
     
     [viewBindings setObject:self.view forKey:@"parent"];
@@ -127,7 +129,7 @@ CGFloat const kBPDefaultSelectedIndexAnimationDuration = .35f;
     NSInteger fromIndex = self.selectedIndex;
     if ([self.delegate respondsToSelector:@selector(swipeTabBarController:willScrollToIndex:fromIndex:)])
         [self.delegate swipeTabBarController:self willScrollToIndex:selectedIndex fromIndex:fromIndex];
-
+    
     [UIView animateWithDuration:animationDuration delay:0 usingSpringWithDamping:1 initialSpringVelocity:velocity options:UIViewAnimationOptionAllowUserInteraction animations:^{
         self.selectedIndex = selectedIndex;
     } completion:^(BOOL finished) {
@@ -141,6 +143,7 @@ CGFloat const kBPDefaultSelectedIndexAnimationDuration = .35f;
 #pragma mark - Init
 - (id) initWithViewControllers:(NSArray *)viewControllers {
     if (self = [super init]) {
+        self.constraintsAdded = NO;
         self.viewControllers = viewControllers;
     }
     return self;
@@ -151,7 +154,7 @@ CGFloat const kBPDefaultSelectedIndexAnimationDuration = .35f;
 - (void)viewDidLoad {
     
     [super viewDidLoad];
-    
+    self.scrollingEnabled = YES;
     self.navigationController.interactivePopGestureRecognizer.enabled = NO;
     
     self.swipeInterval = 0.5f;
@@ -160,12 +163,22 @@ CGFloat const kBPDefaultSelectedIndexAnimationDuration = .35f;
     pan.maximumNumberOfTouches = 1;
     pan.delegate = self;
     [self.view addGestureRecognizer:pan];
+    _constraintsOrientation = self.constraintsOrientation;
+    
+}
+
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    _constraintsAdded = NO;
 }
 
 - (void) viewWillLayoutSubviews {
     [super viewWillLayoutSubviews];
-    
-    [self updateContainerConstraints:self.viewControllers.count];
+    if (!_constraintsAdded || self.constraintsOrientation != self.interfaceOrientation) {
+        [self updateContainerConstraints:self.viewControllers.count];
+        _constraintsAdded = YES;
+        _constraintsOrientation = self.interfaceOrientation;
+    }
 }
 
 - (void) viewDidLayoutSubviews {
@@ -176,6 +189,7 @@ CGFloat const kBPDefaultSelectedIndexAnimationDuration = .35f;
     frame.origin.x = 0;
     self.containerView.frame = frame;
     self.containerView.translatesAutoresizingMaskIntoConstraints = NO;
+    
 }
 
 - (void) updateContainerConstraints:(NSUInteger)controllersCount {
@@ -186,50 +200,50 @@ CGFloat const kBPDefaultSelectedIndexAnimationDuration = .35f;
 
 #pragma mark - Gestures
 - (void) panGesture:(UIPanGestureRecognizer*)gesture {
-    UIView *view = gesture.view;
-    CGPoint translation = [gesture translationInView:view];
-
-    CGRect bounds = view.bounds;
-    bounds.origin.x -= translation.x;
-    view.bounds = bounds;
-    
-    [gesture setTranslation:CGPointMake(0, 0) inView:view];
-
-    if (gesture.state == UIGestureRecognizerStateBegan) {
-        self.panStarted = [NSDate date];
-    }
-    
-    else if (gesture.state == UIGestureRecognizerStateChanged) {
-        if ([self.delegate respondsToSelector:@selector(swipeTabBarController:panning:)]) {
-            CGFloat page = bounds.origin.x / bounds.size.width;
-            NSLog(@"%f", page);
-            [self.delegate swipeTabBarController:self panning:page];
-        }
-    }
-    
-    else if (gesture.state == UIGestureRecognizerStateEnded || gesture.state == UIGestureRecognizerStateCancelled ||
-        gesture.state == UIGestureRecognizerStateFailed) {
+    if (self.scrollingEnabled) {
+        UIView *view = gesture.view;
+        CGPoint translation = [gesture translationInView:view];
         
-        NSTimeInterval sinceStart = [[NSDate date] timeIntervalSinceDate:self.panStarted];
-        NSInteger index;
-        if (sinceStart <= self.swipeInterval) {
-            BOOL movingRight = view.bounds.origin.x > self.selectedViewController.view.frame.origin.x;
-            if (movingRight) {
-                index = self.selectedIndex+1;
-            } else {
-                index = self.selectedIndex-1;
+        CGRect bounds = view.bounds;
+        bounds.origin.x -= translation.x;
+        view.bounds = bounds;
+        
+        [gesture setTranslation:CGPointMake(0, 0) inView:view];
+        
+        if (gesture.state == UIGestureRecognizerStateBegan) {
+            self.panStarted = [NSDate date];
+        }
+        
+        else if (gesture.state == UIGestureRecognizerStateChanged) {
+            if ([self.delegate respondsToSelector:@selector(swipeTabBarController:panning:)]) {
+                CGFloat page = bounds.origin.x / bounds.size.width;
+                [self.delegate swipeTabBarController:self panning:page];
             }
-        } else {
-            index = floor((bounds.origin.x / bounds.size.width) + 0.5);
         }
         
-        CGPoint velGest = [gesture velocityInView:view];
-        CGFloat vel = velGest.x / bounds.origin.x;
-        [self setSelectedIndex:index animationDuration:kBPDefaultSelectedIndexAnimationDuration initialSpringVelocity:vel completion:NULL];
-        
-        self.panStarted = nil;
+        else if (gesture.state == UIGestureRecognizerStateEnded || gesture.state == UIGestureRecognizerStateCancelled ||
+                 gesture.state == UIGestureRecognizerStateFailed) {
+            
+            NSTimeInterval sinceStart = [[NSDate date] timeIntervalSinceDate:self.panStarted];
+            NSInteger index;
+            if (sinceStart <= self.swipeInterval) {
+                BOOL movingRight = view.bounds.origin.x > self.selectedViewController.view.frame.origin.x;
+                if (movingRight) {
+                    index = self.selectedIndex+1;
+                } else {
+                    index = self.selectedIndex-1;
+                }
+            } else {
+                index = floor((bounds.origin.x / bounds.size.width) + 0.5);
+            }
+            
+            CGPoint velGest = [gesture velocityInView:view];
+            CGFloat vel = velGest.x / bounds.origin.x;
+            [self setSelectedIndex:index animationDuration:kBPDefaultSelectedIndexAnimationDuration initialSpringVelocity:vel completion:NULL];
+            
+            self.panStarted = nil;
+        }
     }
-    
 }
 
 // gesture recognizer should only begin when horizontally panning
@@ -238,4 +252,9 @@ CGFloat const kBPDefaultSelectedIndexAnimationDuration = .35f;
     return fabs(velocity.x) > fabs(velocity.y);
 }
 
+
+- (void)setScrollingEnabled:(BOOL)scrollingEnabled {
+    _scrollingEnabled = scrollingEnabled;
+    self.view.gestureRecognizers.firstObject.cancelsTouchesInView = scrollingEnabled;
+}
 @end
